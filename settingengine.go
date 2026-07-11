@@ -85,14 +85,23 @@ type SettingEngine struct {
 		supportedProtocols            []string
 	}
 	sctp struct {
-		maxReceiveBufferSize uint32
-		enableZeroChecksum   bool
-		rtoMax               time.Duration
-		maxMessageSize       uint32
-		minCwnd              uint32
-		fastRtxWnd           uint32
-		cwndCAStep           uint32
-		enableSnap           bool
+		maxReceiveBufferSize         uint32
+		enableZeroChecksum           bool
+		rtoMax                       time.Duration
+		maxMessageSize               uint32
+		minCwnd                      uint32
+		fastRtxWnd                   uint32
+		cwndCAStep                   uint32
+		enableSnap                   bool
+		maxInboundStreams            uint16
+		maxOutboundStreams           uint16
+		maxInboundMessageSize        uint32
+		maxRetainedPayloadChunks     uint32
+		maxReassemblyQueueEntries    uint32
+		enableMessageInterleaving    bool
+		enableMessageInterleavingSet bool
+		equalServiceScheduler        bool
+		dataChannelLifetimeLimit     uint32
 	}
 	sdpMediaLevelFingerprints                 bool
 	answeringDTLSRole                         DTLSRole
@@ -626,6 +635,50 @@ func (e *SettingEngine) EnableSctpSnap(isEnabled bool) {
 // Leave this 0 for the default max message size.
 func (e *SettingEngine) SetSCTPMaxMessageSize(maxMessageSize uint32) {
 	e.sctp.maxMessageSize = maxMessageSize
+}
+
+// SetSCTPStreamLimits sets the maximum inbound and outbound streams advertised
+// and enforced by the SCTP association. A zero value uses SCTP's default.
+func (e *SettingEngine) SetSCTPStreamLimits(inbound, outbound uint16) {
+	e.sctp.maxInboundStreams = inbound
+	e.sctp.maxOutboundStreams = outbound
+}
+
+// SetSCTPMaxInboundMessageSize caps a reassembled inbound SCTP message. A zero
+// value disables this additional cap.
+func (e *SettingEngine) SetSCTPMaxInboundMessageSize(size uint32) {
+	e.sctp.maxInboundMessageSize = size
+}
+
+// SetSCTPMaxRetainedPayloadChunks caps retained DATA and I-DATA chunks across
+// the association. A zero value disables this additional cap.
+func (e *SettingEngine) SetSCTPMaxRetainedPayloadChunks(chunks uint32) {
+	e.sctp.maxRetainedPayloadChunks = chunks
+}
+
+// SetSCTPMaxReassemblyQueueEntries caps queued DATA entries and I-DATA message
+// identifiers per stream. A zero value disables this additional cap.
+func (e *SettingEngine) SetSCTPMaxReassemblyQueueEntries(entries uint32) {
+	e.sctp.maxReassemblyQueueEntries = entries
+}
+
+// EnableSCTPMessageInterleaving explicitly controls RFC 8260 negotiation.
+func (e *SettingEngine) EnableSCTPMessageInterleaving(enabled bool) {
+	e.sctp.enableMessageInterleaving = enabled
+	e.sctp.enableMessageInterleavingSet = true
+}
+
+// SetSCTPInterleavingEqualService selects round-robin service across streams
+// when message interleaving is negotiated.
+func (e *SettingEngine) SetSCTPInterleavingEqualService() {
+	e.sctp.equalServiceScheduler = true
+}
+
+// SetDataChannelLifetimeLimit caps cumulative DataChannel admissions for each
+// PeerConnection. Closed channels do not return admission capacity. A zero
+// value disables the cap.
+func (e *SettingEngine) SetDataChannelLifetimeLimit(limit uint32) {
+	e.sctp.dataChannelLifetimeLimit = limit
 }
 
 // SetDTLSCipherSuites allows the user to specify a list of DTLS CipherSuites.

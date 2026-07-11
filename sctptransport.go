@@ -71,6 +71,8 @@ type SCTPTransport struct {
 	dataChannelsOpened    uint32
 	dataChannelsRequested uint32
 	dataChannelsAccepted  uint32
+	dataChannelsAdmitted  uint32
+	dataChannelsPending   uint32
 
 	localSctpInit []byte
 
@@ -188,7 +190,7 @@ func (r *SCTPTransport) sctpClientOptions(netConn net.Conn, maxMessageSize uint3
 }
 
 func (r *SCTPTransport) optionalSCTPClientOptions() []sctp.ClientOption {
-	opts := make([]sctp.ClientOption, 0, 7)
+	opts := make([]sctp.ClientOption, 0, 13)
 
 	if r.api.settingEngine.sctp.maxReceiveBufferSize != 0 {
 		opts = append(opts, sctp.WithMaxReceiveBufferSize(r.api.settingEngine.sctp.maxReceiveBufferSize))
@@ -221,7 +223,73 @@ func (r *SCTPTransport) optionalSCTPClientOptions() []sctp.ClientOption {
 		opts = append(opts, sctp.WithCwndCAStep(r.api.settingEngine.sctp.cwndCAStep))
 	}
 
+	if inbound := r.api.settingEngine.sctp.maxInboundStreams; inbound != 0 ||
+		r.api.settingEngine.sctp.maxOutboundStreams != 0 {
+		opts = append(opts, sctp.WithStreamLimits(inbound, r.api.settingEngine.sctp.maxOutboundStreams))
+	}
+
+	if size := r.api.settingEngine.sctp.maxInboundMessageSize; size != 0 {
+		opts = append(opts, sctp.WithMaxInboundMessageSize(size))
+	}
+
+	if chunks := r.api.settingEngine.sctp.maxRetainedPayloadChunks; chunks != 0 {
+		opts = append(opts, sctp.WithMaxRetainedPayloadChunks(chunks))
+	}
+
+	if entries := r.api.settingEngine.sctp.maxReassemblyQueueEntries; entries != 0 {
+		opts = append(opts, sctp.WithMaxReassemblyQueueEntries(entries))
+	}
+
+	if r.api.settingEngine.sctp.enableMessageInterleavingSet {
+		opts = append(opts, sctp.WithEnableInterleaving(r.api.settingEngine.sctp.enableMessageInterleaving))
+	}
+
+	if r.api.settingEngine.sctp.equalServiceScheduler {
+		opts = append(opts, sctp.WithInterleavingOptions(sctp.WithInterleavingRoundRobinScheduler()))
+	}
+
 	return opts
+}
+
+func (r *SCTPTransport) admitDataChannel() bool {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	limit := r.api.settingEngine.sctp.dataChannelLifetimeLimit
+	if limit != 0 && r.dataChannelsAdmitted+r.dataChannelsPending >= limit {
+		return false
+	}
+
+	r.dataChannelsAdmitted++
+
+	return true
+}
+
+func (r *SCTPTransport) reserveDataChannel() bool {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	limit := r.api.settingEngine.sctp.dataChannelLifetimeLimit
+	if limit != 0 && r.dataChannelsAdmitted+r.dataChannelsPending >= limit {
+		return false
+	}
+
+	r.dataChannelsPending++
+
+	return true
+}
+
+func (r *SCTPTransport) finishDataChannelReservation(admitted bool) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	if r.dataChannelsPending == 0 {
+		panic("data channel reservation underflow")
+	}
+	r.dataChannelsPending--
+	if admitted {
+		r.dataChannelsAdmitted++
+	}
 }
 
 // Stop stops the SCTPTransport.
@@ -268,10 +336,27 @@ ACCEPT:
 			return
 		}
 
+		reserved := false
 		dc, err := datachannel.Accept(assoc, &datachannel.Config{
 			LoggerFactory: r.api.settingEngine.LoggerFactory,
+			AcceptDataChannel: func(datachannel.DataChannelOpenInfo) error {
+				if !r.reserveDataChannel() {
+					return ErrDataChannelLifetimeLimit
+				}
+				reserved = true
+
+				return nil
+			},
 		}, dataChannels...)
+		if reserved {
+			r.finishDataChannelReservation(err == nil)
+		}
 		if err != nil {
+			if errors.Is(err, datachannel.ErrDataChannelAdmissionRejected) {
+				r.onError(err)
+
+				continue ACCEPT
+			}
 			if !errors.Is(err, io.EOF) {
 				r.log.Errorf("Failed to accept data channel: %v", err)
 				r.onError(err)
@@ -316,7 +401,7 @@ ACCEPT:
 		}
 
 		sid := dc.StreamIdentifier()
-		rtcDC, err := r.api.newDataChannel(&DataChannelParameters{
+		params := &DataChannelParameters{
 			ID:                &sid,
 			Label:             dc.Config.Label,
 			Protocol:          dc.Config.Protocol,
@@ -324,7 +409,16 @@ ACCEPT:
 			Ordered:           ordered,
 			MaxPacketLifeTime: maxPacketLifeTime,
 			MaxRetransmits:    maxRetransmits,
-		}, r, r.api.settingEngine.LoggerFactory.NewLogger("ortc"))
+		}
+		if len(params.Label) > 65535 {
+			if closeErr := dc.Close(); closeErr != nil {
+				r.log.Errorf("Failed to close invalid data channel: %v", closeErr)
+			}
+			r.onError(ErrStringSizeLimit)
+
+			continue ACCEPT
+		}
+		rtcDC, err := r.api.newDataChannel(params, r, r.api.settingEngine.LoggerFactory.NewLogger("ortc"))
 		if err != nil {
 			// This data channel is invalid. Close it and log an error.
 			if err1 := dc.Close(); err1 != nil {

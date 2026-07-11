@@ -19,6 +19,10 @@ var (
 	// channel is not (yet) open.
 	ErrDataChannelNotOpen = errors.New("data channel not open")
 
+	// ErrDataChannelLifetimeLimit indicates that the configured cumulative
+	// DataChannel admission limit has been reached for a PeerConnection.
+	ErrDataChannelLifetimeLimit = errors.New("data channel lifetime limit reached")
+
 	// ErrCertificateExpired indicates that an x509 certificate has expired.
 	ErrCertificateExpired = errors.New("x509Cert expired")
 

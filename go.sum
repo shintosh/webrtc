@@ -73,6 +73,10 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/sclevine/agouti v3.0.0+incompatible h1:8IBJS6PWz3uTlMP3YBIR5f+KAldcGuOeFkFbUWfBgK4=
 github.com/sclevine/agouti v3.0.0+incompatible/go.mod h1:b4WX9W9L1sfQKXeJf1mUTLZKJ48R1S7H23Ji7oFO5Bw=
+github.com/shintosh/datachannel v0.0.0-20260711054610-4620f22ac505 h1:0cCF6IH3g0Z8PyRP+2NP67xKcCDQD9PWVR0yB6jw1fM=
+github.com/shintosh/datachannel v0.0.0-20260711054610-4620f22ac505/go.mod h1:btfG+zoez6d5twRNYbnvrAPycU+ZXfLVF54yUgjVFqI=
+github.com/shintosh/sctp v0.0.0-20260711045844-d2414fe9d978 h1:9hIJnUkC37xHX90l8Fg+jxO2l1lR/eM55oalmaNqDMA=
+github.com/shintosh/sctp v0.0.0-20260711045844-d2414fe9d978/go.mod h1:7KFmTwLcoYgJs/Z+99nJvsWL0qDpuyloSI0RbAqlrz0=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.5.1/go.mod h1:5W2xD1RspED5o8YsWQXVCued0rvSQ+mT+I5cxcmMvtA=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=

@@ -2427,16 +2427,22 @@ func (pc *PeerConnection) CreateDataChannel(label string, options *DataChannelIn
 		}
 	}
 
+	if len(params.Label) > 65535 {
+		return nil, &rtcerr.TypeError{Err: ErrStringSizeLimit}
+	}
+	if params.MaxPacketLifeTime != nil && params.MaxRetransmits != nil {
+		return nil, &rtcerr.TypeError{Err: ErrRetransmitsOrPacketLifeTime}
+	}
+	if !pc.sctpTransport.admitDataChannel() {
+		return nil, &rtcerr.OperationError{Err: ErrDataChannelLifetimeLimit}
+	}
+
 	dataChannel, err := pc.api.newDataChannel(params, nil, pc.log)
 	if err != nil {
 		return nil, err
 	}
 
 	// https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #16)
-	if dataChannel.maxPacketLifeTime != nil && dataChannel.maxRetransmits != nil {
-		return nil, &rtcerr.TypeError{Err: ErrRetransmitsOrPacketLifeTime}
-	}
-
 	pc.sctpTransport.lock.Lock()
 	pc.sctpTransport.dataChannels = append(pc.sctpTransport.dataChannels, dataChannel)
 	if dataChannel.ID() != nil {

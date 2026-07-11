@@ -22,6 +22,10 @@ require (
 	golang.org/x/net v0.50.0
 )
 
+replace github.com/pion/datachannel => github.com/shintosh/datachannel v0.0.0-20260711054610-4620f22ac505
+
+replace github.com/pion/sctp => github.com/shintosh/sctp v0.0.0-20260711045844-d2414fe9d978
+
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
