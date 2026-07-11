@@ -6,11 +6,18 @@
 package webrtc
 
 import (
+	"fmt"
 	"net"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/pion/ice/v4"
+	"github.com/pion/logging"
 	"github.com/pion/stun/v3"
+	"github.com/pion/transport/v4/test"
+	"github.com/pion/transport/v4/vnet"
+	"github.com/pion/turn/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -153,4 +160,129 @@ func TestP2PCandidateBoundPolicyAndMDNSMatrix(t *testing.T) {
 	assert.True(t, p2pCandidateCountWithinBudget(7), "one endpoint of measured drift headroom")
 	assert.True(t, p2pCandidateCountWithinBudget(8), "two endpoints of measured drift headroom")
 	assert.False(t, p2pCandidateCountWithinBudget(9), "ninth endpoint blocks activation")
+}
+
+func TestP2PCandidateBoundBehavioralGatherMatrix(t *testing.T) { //nolint:cyclop
+	lim := test.TimeOut(30 * time.Second)
+	defer lim.Stop()
+
+	report := test.CheckRoutines(t)
+	defer report()
+
+	const (
+		serverIP   = "10.0.0.1"
+		firstIP    = "10.0.0.2"
+		secondIP   = "10.0.0.3"
+		serverPort = 3478
+		realm      = "pion.ly"
+		username   = "user"
+		password   = "pass"
+	)
+
+	loggerFactory := logging.NewDefaultLoggerFactory()
+	router, err := vnet.NewRouter(&vnet.RouterConfig{
+		CIDR:          "10.0.0.0/24",
+		LoggerFactory: loggerFactory,
+	})
+	require.NoError(t, err)
+	serverNet, err := vnet.NewNet(&vnet.NetConfig{StaticIPs: []string{serverIP}})
+	require.NoError(t, err)
+	clientNet, err := vnet.NewNet(&vnet.NetConfig{StaticIPs: []string{firstIP, secondIP}})
+	require.NoError(t, err)
+	require.NoError(t, router.AddNet(serverNet))
+	require.NoError(t, router.AddNet(clientNet))
+	require.NoError(t, router.Start())
+	defer func() { assert.NoError(t, router.Stop()) }()
+
+	listener, err := serverNet.ListenPacket("udp4", net.JoinHostPort(serverIP, fmt.Sprint(serverPort)))
+	require.NoError(t, err)
+	authKey := turn.GenerateAuthKey(username, realm, password)
+	turnServer, err := turn.NewServer(turn.ServerConfig{
+		Realm: realm,
+		AuthHandler: func(attributes *turn.RequestAttributes) (string, []byte, bool) {
+			if attributes.Username == username && attributes.Realm == realm {
+				return attributes.Username, authKey, true
+			}
+
+			return "", nil, false
+		},
+		PacketConnConfigs: []turn.PacketConnConfig{{
+			PacketConn: listener,
+			RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
+				RelayAddress: net.ParseIP(serverIP),
+				Address:      "0.0.0.0",
+				Net:          serverNet,
+			},
+		}},
+		LoggerFactory: loggerFactory,
+	})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, turnServer.Close()) }()
+
+	iceServers := []ICEServer{{
+		URLs: []string{
+			fmt.Sprintf("stun:%s:%d", serverIP, serverPort),
+			fmt.Sprintf("turn:%s:%d?transport=udp", serverIP, serverPort),
+		},
+		Username:   username,
+		Credential: password,
+	}}
+	se := SettingEngine{}
+	se.SetNet(clientNet)
+	se.SetNetworkTypes([]NetworkType{NetworkTypeUDP4})
+	se.SetIPFilter(func(ip net.IP) bool {
+		return ip.Equal(net.ParseIP(firstIP)) || ip.Equal(net.ParseIP(secondIP))
+	})
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+
+	candidates := gatherCandidatesWithSettingEngine(t, se, ICEGatherOptions{
+		ICEServers:      iceServers,
+		ICEGatherPolicy: ICETransportPolicyAll,
+	})
+	type endpoint struct {
+		protocol ICEProtocol
+		address  string
+		port     uint16
+	}
+	unique := make(map[endpoint]struct{}, len(candidates))
+	byClass := make(map[ICECandidateType]int)
+	for _, candidate := range candidates {
+		require.Equal(t, ICEProtocolUDP, candidate.Protocol)
+		key := endpoint{
+			protocol: candidate.Protocol,
+			address:  candidate.Address,
+			port:     candidate.Port,
+		}
+		if _, exists := unique[key]; exists {
+			continue
+		}
+		unique[key] = struct{}{}
+		byClass[candidate.Typ]++
+	}
+
+	assert.Equal(t, 2, byClass[ICECandidateTypeHost])
+	// Pion gathers srflx candidates from TURN URLs as well as STUN URLs.
+	// One of each URL therefore creates two srflx candidates per source.
+	assert.Equal(t, 4, byClass[ICECandidateTypeSrflx])
+	assert.Equal(t, 2, byClass[ICECandidateTypeRelay])
+	assert.Equal(t, p2pCandidateBudget, len(unique))
+	assert.Greater(t, len(unique), p2pCandidateExpectedBound)
+	assert.True(t, p2pCandidateCountWithinBudget(len(unique)))
+}
+
+func TestP2PCandidateDesktopMDNSRepresentation(t *testing.T) {
+	se := SettingEngine{}
+	se.SetNetworkTypes([]NetworkType{NetworkTypeUDP4})
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeQueryAndGather)
+
+	candidates := gatherCandidatesWithSettingEngine(t, se, ICEGatherOptions{})
+	hostCandidates := 0
+	for _, candidate := range candidates {
+		if candidate.Typ != ICECandidateTypeHost {
+			continue
+		}
+		hostCandidates++
+		assert.True(t, strings.HasSuffix(candidate.Address, ".local"), candidate.Address)
+	}
+	assert.Positive(t, hostCandidates)
 }
